@@ -170,7 +170,7 @@ def mst_approx_tsp(dist):
 
 
 # local search - hill climbing with 2-opt
-def hill_climb_2opt(dist: List[List[int]], time_limit: float, first_improvement: bool = True) -> Tuple[Tour, int]:
+def hill_climb_2opt(dist: List[List[int]], time_limit: float) -> Tuple[Tour, int]:
     num_points = len(dist)
     algorithm_start = time.time()
 
@@ -199,11 +199,6 @@ def hill_climb_2opt(dist: List[List[int]], time_limit: float, first_improvement:
                         best_move_tour = new_tour
                         best_move_distance = new_distance
                         keep_improving = True
-                        if first_improvement:
-                            # take the first improvement (greedy)
-                            break
-                if first_improvement and keep_improving:
-                    break
             # accept improvement
             if keep_improving:
                 working_tour = best_move_tour
@@ -242,52 +237,116 @@ def write_solution_file(instance_path: str, method: str, cutoff: int, seed: int,
         output_file.write(tour_string + "\n")
     return output_filename
 
-# argument parsing
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-inst", required=True, help="path to .tsp")
-    parser.add_argument("-alg", required=True, help="algorithm name")
-    parser.add_argument("-time", required=False, type=int, help="time limit in seconds")
-    parser.add_argument("-seed", required=False, type=int, help="random seed")
-
-    args = parser.parse_args()
-
-    alg_upper = args.alg.upper()
-    if alg_upper not in ["LS", "APPROX", "BF"]:
-        raise ValueError("This executable only supports LS, APPROX, or BF")
-
-    if alg_upper == "LS" and args.time is None:
-        raise ValueError("Time limit is required for LS")
+# run Boston.tsp LS 10 times with different seeds and output average
+def run_boston_ls_average():
+    instance_path = "DATA/Boston.tsp"
+    time_limit = 10
+    num_runs = 10
     
-    if alg_upper == "BF" and args.time is None:
-        raise ValueError("Time limit is required for BF")
-
-    if alg_upper in ["LS", "APPROX"] and args.seed is None:
-        raise ValueError("Seed is required for LS and APPROX")
-
-    if args.seed is not None:
-        random.seed(args.seed)
-    
-    coords = read_tsp_coordinates(args.inst)
+    # Load the instance once
+    coords = read_tsp_coordinates(instance_path)
     dist = build_distance_matrix(coords)
     
-    if alg_upper == "LS":
-        best_tour, best_len = hill_climb_2opt(dist, time_limit=float(args.time))
-        cutoff_value = args.time
-        seed_value = args.seed
-    elif alg_upper == "BF":
-        best_len, best_tour = brute_force_tsp(dist, cutoff=float(args.time))
-        cutoff_value = args.time
-        seed_value = args.seed if args.seed is not None else 0
-    else:  # APPROX
-        best_len, best_tour = mst_approx_tsp(dist)
-        cutoff_value = args.time if args.time is not None else 0
-        seed_value = args.seed
+    tour_lengths = []
+    runtimes = []
+    seed_results = []  # Store (seed, tour_length) pairs for later relative error calculation
     
-    sol_path = write_solution_file(instance_path=args.inst, method=args.alg, cutoff=cutoff_value, seed=seed_value, tour=best_tour, length=best_len)
+    # Generate 10 random seeds
+    random_seeds = random.sample(range(1, 10000), num_runs)
+    
+    # Run 10 times with random seeds
+    for seed in random_seeds:
+        random.seed(seed)
+        start_time = time.time()
+        best_tour, best_len = hill_climb_2opt(dist, time_limit=float(time_limit))
+        end_time = time.time()
+        actual_runtime = end_time - start_time
+        
+        # Write solution file for this seed
+        sol_path = write_solution_file(
+            instance_path=instance_path,
+            method="LS",
+            cutoff=time_limit,
+            seed=seed,
+            tour=best_tour,
+            length=best_len
+        )
+        
+        tour_lengths.append(best_len)
+        runtimes.append(actual_runtime)
+        seed_results.append((seed, best_len, actual_runtime, sol_path))
+    
+    # Find the best (minimum) tour length across all runs
+    best_length = min(tour_lengths)
+    
+    # Calculate and print results with relative errors
+    print("\nResults for each run:")
+    for seed, tour_len, runtime, sol_path in seed_results:
+        rel_error = ((tour_len - best_length) / best_length) * 100
+        print(f"Seed {seed}: Tour length = {tour_len}, RelError = {rel_error}%, Runtime = {runtime:.2f}s, File: {sol_path}")
+    
+    # Calculate and print averages
+    average_length = sum(tour_lengths) / len(tour_lengths)
+    average_runtime = sum(runtimes) / len(runtimes)
+    avg_rel_error = ((average_length - best_length) / best_length) * 100
+    
+    print(f"\nBest tour length found: {best_length}")
+    print(f"Average best tour length over {num_runs} runs: {average_length:.2f}")
+    print(f"Average RelError: {avg_rel_error}%")
+    print(f"Average runtime over {num_runs} runs: {average_runtime:.2f}s")
+    return average_length, average_runtime
 
-    print(f"Best tour length: {best_len}")
-    print(f"Solution written to: {sol_path}")
+
+# argument parsing
+def main():
+    # Temporarily commented out to run Boston LS average
+    run_boston_ls_average()
+    return
+    
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("-inst", required=True, help="path to .tsp")
+    # parser.add_argument("-alg", required=True, help="algorithm name")
+    # parser.add_argument("-time", required=False, type=int, help="time limit in seconds")
+    # parser.add_argument("-seed", required=False, type=int, help="random seed")
+    #
+    # args = parser.parse_args()
+    #
+    # alg_upper = args.alg.upper()
+    # if alg_upper not in ["LS", "APPROX", "BF"]:
+    #     raise ValueError("This executable only supports LS, APPROX, or BF")
+    #
+    # if alg_upper == "LS" and args.time is None:
+    #     raise ValueError("Time limit is required for LS")
+    # 
+    # if alg_upper == "BF" and args.time is None:
+    #     raise ValueError("Time limit is required for BF")
+    #
+    # if alg_upper in ["LS", "APPROX"] and args.seed is None:
+    #     raise ValueError("Seed is required for LS and APPROX")
+    #
+    # if args.seed is not None:
+    #     random.seed(args.seed)
+    # 
+    # coords = read_tsp_coordinates(args.inst)
+    # dist = build_distance_matrix(coords)
+    # 
+    # if alg_upper == "LS":
+    #     best_tour, best_len = hill_climb_2opt(dist, time_limit=float(args.time))
+    #     cutoff_value = args.time
+    #     seed_value = args.seed
+    # elif alg_upper == "BF":
+    #     best_len, best_tour = brute_force_tsp(dist, cutoff=float(args.time))
+    #     cutoff_value = args.time
+    #     seed_value = args.seed if args.seed is not None else 0
+    # else:  # APPROX
+    #     best_len, best_tour = mst_approx_tsp(dist)
+    #     cutoff_value = args.time if args.time is not None else 0
+    #     seed_value = args.seed
+    # 
+    # sol_path = write_solution_file(instance_path=args.inst, method=args.alg, cutoff=cutoff_value, seed=seed_value, tour=best_tour, length=best_len)
+    #
+    # print(f"Best tour length: {best_len}")
+    # print(f"Solution written to: {sol_path}")
 
 
 if __name__ == "__main__":
