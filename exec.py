@@ -1,139 +1,114 @@
 #!/usr/bin/env python3
-import sys
-import math
-import time
-import random
+
+import argparse
 import itertools
+import math
 import os
+import random
+import time
 from typing import List, Tuple
 
-# ==========================
-#   Data loading & distances
-# ==========================
 
-def load_tsp_file(filename: str) -> Tuple[List[int], List[Tuple[float, float]]]:
-    """
-    Load a TSP instance from a file.
-    Assumes lines with three tokens: node_id x y
-    and skips non-data lines.
+Coord = Tuple[float, float]
+Tour = List[int]
 
-    Returns:
-        node_ids: list of original vertex IDs as in file
-        coords:   list of (x, y) coordinates in the same order
-    """
-    node_ids = []
-    coords = []
-    with open(filename, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
+# Data loading
+def read_tsp_coordinates(path: str) -> List[Coord]:
+    coordinate_pairs: List[Coord] = []
+    reading_coordinates = False
+
+    with open(path, "r") as file_reader:
+        for current_line in file_reader:
+            stripped_line = current_line.strip()
+            if stripped_line.upper().startswith("NODE_COORD_SECTION"):
+                reading_coordinates = True
                 continue
-            parts = line.split()
-            if len(parts) < 3:
+            if stripped_line.upper().startswith("EOF"):
+                break
+            if not reading_coordinates:
                 continue
-            # Try to parse first token as an int node id
-            try:
-                node_id = int(parts[0])
-                x = float(parts[1])
-                y = float(parts[2])
-            except ValueError:
-                # Not a data line (e.g., header), skip
+            if not stripped_line:
                 continue
-            node_ids.append(node_id)
-            coords.append((x, y))
-    return node_ids, coords
+            # just get x and y
+            split_parts = stripped_line.split()
+            x_coord = float(split_parts[1])
+            y_coord = float(split_parts[2])
+            coordinate_pairs.append((x_coord, y_coord))
+    return coordinate_pairs
 
 
-def build_distance_matrix(coords: List[Tuple[float, float]]) -> List[List[int]]:
-    """
-    Build an NxN matrix of rounded Euclidean distances.
-    """
-    n = len(coords)
-    dist = [[0] * n for _ in range(n)]
-    for i in range(n):
-        x1, y1 = coords[i]
-        for j in range(i + 1, n):
-            x2, y2 = coords[j]
-            d = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
-            w = int(round(d))
-            dist[i][j] = w
-            dist[j][i] = w
-    return dist
+# create distance matrix
+def build_distance_matrix(coords: List[Coord]) -> List[List[int]]:
+    num_points = len(coords)
+    # initialize with zeros
+    distance_matrix = []
+    for i in range(num_points):
+        row = [0] * num_points
+        distance_matrix.append(row)
+    for i in range(num_points):
+        point_x, point_y = coords[i]
+        for j in range(i + 1, num_points):
+            other_x, other_y = coords[j]
+            x_diff = point_x - other_x
+            y_diff = point_y - other_y
+            # euclidean distance formula
+            raw_distance = math.sqrt(x_diff * x_diff + y_diff * y_diff)
+            rounded_dist = int(round(raw_distance))
+            distance_matrix[i][j] = rounded_dist
+            distance_matrix[j][i] = rounded_dist
+    return distance_matrix
 
+# calculate tour length
+def tour_length(tour: Tour, dist: List[List[int]]) -> int:
+    tour_size = len(tour)
+    total_distance = 0
+    for index in range(tour_size - 1):
+        current_point = tour[index]
+        next_point = tour[index + 1]
+        total_distance += dist[current_point][next_point]
+    last_point = tour[-1]
+    first_point = tour[0]
+    total_distance += dist[last_point][first_point]
+    return total_distance
 
-def tour_cost(tour: List[int], dist: List[List[int]]) -> int:
-    """
-    Compute cost of a tour visiting each city exactly once.
-    We assume the tour is a cycle, so we close it back to the start city.
-    """
-    total = 0
-    n = len(tour)
-    for i in range(n):
-        u = tour[i]
-        v = tour[(i + 1) % n]
-        total += dist[u][v]
-    return total
+# create random tour list
+def random_tour(n: int) -> Tour:
+    point_list = list(range(n))
+    random.shuffle(point_list)
+    return point_list
 
+# 2-opt swap
+def two_opt_swap(tour: Tour, i: int, j: int) -> Tour:
+    before_segment = tour[:i]
+    reversed_segment = list(reversed(tour[i:j+1]))
+    after_segment = tour[j+1:]
+    return before_segment + reversed_segment + after_segment
 
-# ==========================
-#   Algorithm 1: Brute Force
-# ==========================
-
+# brute force tsp
 def brute_force_tsp(dist: List[List[int]], cutoff: float) -> Tuple[int, List[int]]:
-    """
-    Brute force TSP (exact) with time cutoff.
-
-    Fix city 0 as the start to avoid equivalent permutations.
-    Explore permutations of the remaining cities. Stop when
-    cutoff seconds have elapsed and return the best tour found.
-
-    Returns:
-        (best_cost, best_tour_indices)
-    """
     n = len(dist)
     if n == 0:
         return 0, []
-
     start_time = time.time()
     cities = list(range(n))
     best_cost = float("inf")
     best_tour = None
-
-    # We'll fix city 0 at the start of the tour
     others = cities[1:]
-
     for perm in itertools.permutations(others):
-        # Check cutoff
         if time.time() - start_time > cutoff:
             break
-
         tour = [0] + list(perm)
-        cost = tour_cost(tour, dist)
+        cost = tour_length(tour, dist)
         if cost < best_cost:
             best_cost = cost
             best_tour = tour
-
-    # If cutoff was so small no permutation was fully evaluated,
-    # fall back on a trivial tour [0,1,2,...,n-1]
     if best_tour is None:
         best_tour = list(range(n))
-        best_cost = tour_cost(best_tour, dist)
-
+        best_cost = tour_length(best_tour, dist)
     return best_cost, best_tour
 
-
-# ====================================
-#   Algorithm 2: MST-based 2-Approx TSP
-# ====================================
-
-def prim_mst(dist: List[List[int]]) -> List[List[int]]:
-    """
-    Prim's algorithm to compute the MST of a complete graph
-    given by distance matrix 'dist'.
-
-    Returns adjacency list 'mst_adj', where mst_adj[u] is a list
-    of neighbors of u in the MST.
-    """
+# prim's minimum spanning tree
+def prim_mst(dist: List[List[int]]):
     n = len(dist)
     in_mst = [False] * n
     key = [float("inf")] * n
@@ -141,7 +116,6 @@ def prim_mst(dist: List[List[int]]) -> List[List[int]]:
 
     key[0] = 0
     for _ in range(n):
-        # Pick the vertex with minimum key not yet in MST
         u = -1
         min_val = float("inf")
         for v in range(n):
@@ -151,15 +125,14 @@ def prim_mst(dist: List[List[int]]) -> List[List[int]]:
 
         if u == -1:
             break
+
         in_mst[u] = True
 
-        # Update keys
         for w in range(n):
             if not in_mst[w] and dist[u][w] < key[w]:
                 key[w] = dist[u][w]
                 parent[w] = u
 
-    # Build adjacency list
     mst_adj = [[] for _ in range(n)]
     for v in range(1, n):
         p = parent[v]
@@ -169,16 +142,13 @@ def prim_mst(dist: List[List[int]]) -> List[List[int]]:
 
     return mst_adj
 
-
-def preorder_traversal(adj: List[List[int]], start: int = 0) -> List[int]:
-    """
-    Preorder DFS traversal of a tree (MST).
-    """
+# preorder traversal
+def preorder_traversal(adj, start=0):
     n = len(adj)
     visited = [False] * n
     order = []
 
-    def dfs(u: int):
+    def dfs(u):
         visited[u] = True
         order.append(u)
         for v in adj[u]:
@@ -188,232 +158,136 @@ def preorder_traversal(adj: List[List[int]], start: int = 0) -> List[int]:
     dfs(start)
     return order
 
-
-def mst_approx_tsp(dist: List[List[int]]) -> Tuple[int, List[int]]:
-    """
-    2-Approximation of TSP via MST preorder walk.
-
-    Steps:
-    1. Build MST (e.g., Prim's).
-    2. Do a preorder traversal of the MST.
-    3. Use that traversal order as the tour.
-
-    Returns:
-        (cost, tour_indices)
-    """
+# mst approximation
+def mst_approx_tsp(dist):
     if not dist:
         return 0, []
 
     mst_adj = prim_mst(dist)
     tour = preorder_traversal(mst_adj, 0)
-    cost = tour_cost(tour, dist)
+    cost = tour_length(tour, dist)
     return cost, tour
 
 
-# =====================================
-#   Algorithm 3: Local Search - 2-opt
-# =====================================
+# local search - hill climbing with 2-opt
+def hill_climb_2opt(dist: List[List[int]], time_limit: float, first_improvement: bool = True) -> Tuple[Tour, int]:
+    num_points = len(dist)
+    algorithm_start = time.time()
 
-def two_opt_swap(tour: List[int], i: int, k: int) -> List[int]:
-    """
-    Perform a 2-opt swap by reversing the tour segment between i and k (inclusive).
-    """
-    new_tour = tour[:i] + tour[i:k+1][::-1] + tour[k+1:]
-    return new_tour
+    best_tour_found = None
+    best_distance_found = math.inf
 
-
-def two_opt_local_search(dist: List[List[int]], cutoff: float, seed: int) -> Tuple[int, List[int]]:
-    """
-    2-opt local search for TSP within a time cutoff.
-
-    - Start with a random tour determined by 'seed'.
-    - Iteratively apply 2-opt moves that improve the tour.
-    - Stop when no improving move is found or cutoff expires.
-
-    Returns:
-        (best_cost, best_tour)
-    """
-    random.seed(seed)
-    n = len(dist)
-    if n == 0:
-        return 0, []
-
-    # Initial random tour
-    tour = list(range(n))
-    random.shuffle(tour)
-
-    best_tour = tour
-    best_cost = tour_cost(best_tour, dist)
-
-    start_time = time.time()
-
-    improved = True
-    while improved and (time.time() - start_time) < cutoff:
-        improved = False
-        # Try all pairs i < k for 2-opt
-        for i in range(1, n - 1):       # don't move the first city index 0
-            for k in range(i + 1, n):
-                if time.time() - start_time >= cutoff:
+    # keep trying new random starting points until time runs out
+    while time.time() - algorithm_start < time_limit:
+        # get random starting tour
+        working_tour = random_tour(num_points)
+        working_distance = tour_length(working_tour, dist)
+        keep_improving = True
+        # climb from this starting point
+        while keep_improving and (time.time() - algorithm_start < time_limit):
+            keep_improving = False
+            best_move_tour = working_tour
+            best_move_distance = working_distance
+            # try all possible 2-opt swaps
+            for i in range(1, num_points - 1):
+                for j in range(i + 1, num_points):
+                    if time.time() - algorithm_start >= time_limit:
+                        break
+                    new_tour = two_opt_swap(working_tour, i, j)
+                    new_distance = tour_length(new_tour, dist)
+                    if new_distance < best_move_distance:
+                        best_move_tour = new_tour
+                        best_move_distance = new_distance
+                        keep_improving = True
+                        if first_improvement:
+                            # take the first improvement (greedy)
+                            break
+                if first_improvement and keep_improving:
                     break
-
-                # Compute the cost difference of reversing between i and k
-                a, b = best_tour[i - 1], best_tour[i]
-                c, d = best_tour[k], best_tour[(k + 1) % n]
-
-                # Current edges: (a,b) + (c,d)
-                # New edges:     (a,c) + (b,d)
-                delta = dist[a][c] + dist[b][d] - dist[a][b] - dist[c][d]
-                if delta < 0:
-                    # Improvement found
-                    best_tour = two_opt_swap(best_tour, i, k)
-                    best_cost += delta
-                    improved = True
-                    break  # restart scanning from beginning of neighbors
-            if improved:
-                break
-
-    return best_cost, best_tour
+            # accept improvement
+            if keep_improving:
+                working_tour = best_move_tour
+                working_distance = best_move_distance
+        # update global best
+        if working_distance < best_distance_found:
+            best_distance_found = working_distance
+            best_tour_found = working_tour
+    return best_tour_found, best_distance_found
 
 
-# ==========================
-#   Output writer
-# ==========================
 
-def write_solution_file(
-    instance_name: str,
-    method: str,
-    cutoff: float = None,
-    seed: int = None,
-    best_cost: int = 0,
-    best_tour_indices: List[int] = None,
-    node_ids: List[int] = None,
-):
-    """
-    Write solution to a .sol file.
+# write solution file
+def write_solution_file(instance_path: str, method: str, cutoff: int, seed: int, tour: Tour, length: int) -> str:
+    filename_with_ext = os.path.basename(instance_path)
+    instance_name, file_extension = os.path.splitext(filename_with_ext)
+    instance_name_lower = instance_name.lower()
+    method_upper = method.upper()
+    cutoff_value = str(int(cutoff))
+    seed_value = str(int(seed)) if seed is not None else "0"
 
-    File naming conventions (you can tweak to match the grader):
-    - BF:     <instance> BF <cutoff>.sol
-    - Approx: <instance> Approx.sol
-    - LS:     <instance> LS <cutoff> <seed>.sol
+    # construct output filename
+    output_filename = f"{instance_name_lower}_{method_upper}_{cutoff_value}_{seed_value}.sol"
+    # convert from 0-based to 1-based indexing
+    tour_one_based = []
+    for vertex in tour:
+        tour_one_based.append(vertex + 1)
+    # add the first vertex at the end
+    if tour_one_based:
+        tour_one_based.append(tour_one_based[0])
+    # create comma-separated string of the tour
+    tour_string = ", ".join(str(vertex_id) for vertex_id in tour_one_based)
+    # write the solution file
+    with open(output_filename, "w") as output_file:
+        output_file.write(f"{float(length)}\n")
+        output_file.write(tour_string + "\n")
+    return output_filename
 
-    File content:
-    - line 1: cost
-    - line 2: list of vertex IDs (original IDs from input), comma-separated
-    """
-    if best_tour_indices is None:
-        best_tour_indices = []
-    if node_ids is None:
-        node_ids = []
-
-    if method == "BF":
-        file_name = f"{instance_name} BF {int(cuttoff)}.sol"
-    elif method == "Approx":
-        file_name = f"{instance_name} Approx.sol"
-    elif method == "LS":
-        if cutoff is None or seed is None:
-            raise ValueError("LS requires both cutoff and seed for naming.")
-        file_name = f"{instance_name} LS {int(cutoff)} {seed}.sol"
-    else:
-        raise ValueError(f"Unknown method {method}")
-
-    # Map internal indices back to original vertex IDs
-    # If node_ids is [id0, id1, ..., id(n-1)], and tour is [0,2,1,...],
-    # then solution line is [node_ids[0], node_ids[2], node_ids[1], ...]
-    vertex_id_tour = [str(node_ids[i]) for i in best_tour_indices]
-
-    with open(file_name, "w") as f:
-        f.write(str(best_cost) + "\n")
-        f.write(",".join(vertex_id_tour) + "\n")
-
-    print(f"Wrote solution to {file_name}")
-
-
-# ==========================
-#   Main / CLI
-# ==========================
-
+# argument parsing
 def main():
-    """
-    Simple CLI wrapper.
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-inst", required=True, help="path to .tsp")
+    parser.add_argument("-alg", required=True, help="algorithm name")
+    parser.add_argument("-time", required=False, type=int, help="time limit in seconds")
+    parser.add_argument("-seed", required=False, type=int, help="random seed")
 
-    Usage (you can adapt to your professor's exact spec):
+    args = parser.parse_args()
 
-        Brute force:
-            python exec.py <instance_file> BF <cutoff_seconds>
+    alg_upper = args.alg.upper()
+    if alg_upper not in ["LS", "APPROX", "BF"]:
+        raise ValueError("This executable only supports LS, APPROX, or BF")
 
-        Approximation (MST 2-approx):
-            python exec.py <instance_file> Approx
+    if alg_upper == "LS" and args.time is None:
+        raise ValueError("Time limit is required for LS")
+    
+    if alg_upper == "BF" and args.time is None:
+        raise ValueError("Time limit is required for BF")
 
-        Local search (2-opt):
-            python exec.py <instance_file> LS <cutoff_seconds> <seed>
-    """
-    if len(sys.argv) < 3:
-        print("Usage:")
-        print("  BF:     python exec.py <instance_file> BF <cutoff_seconds>")
-        print("  Approx: python exec.py <instance_file> Approx")
-        print("  LS:     python exec.py <instance_file> LS <cutoff_seconds> <seed>")
-        sys.exit(1)
+    if alg_upper in ["LS", "APPROX"] and args.seed is None:
+        raise ValueError("Seed is required for LS and APPROX")
 
-    instance_file = sys.argv[1]
-    method = sys.argv[2]
-
-    # Load instance
-    node_ids, coords = load_tsp_file(instance_file)
-    if not node_ids:
-        print(f"Error: could not parse any nodes from {instance_file}")
-        sys.exit(1)
-
+    if args.seed is not None:
+        random.seed(args.seed)
+    
+    coords = read_tsp_coordinates(args.inst)
     dist = build_distance_matrix(coords)
-    instance_name = os.path.splitext(os.path.basename(instance_file))[0]
+    
+    if alg_upper == "LS":
+        best_tour, best_len = hill_climb_2opt(dist, time_limit=float(args.time))
+        cutoff_value = args.time
+        seed_value = args.seed
+    elif alg_upper == "BF":
+        best_len, best_tour = brute_force_tsp(dist, cutoff=float(args.time))
+        cutoff_value = args.time
+        seed_value = args.seed if args.seed is not None else 0
+    else:  # APPROX
+        best_len, best_tour = mst_approx_tsp(dist)
+        cutoff_value = args.time if args.time is not None else 0
+        seed_value = args.seed
+    
+    sol_path = write_solution_file(instance_path=args.inst, method=args.alg, cutoff=cutoff_value, seed=seed_value, tour=best_tour, length=best_len)
 
-    if method == "BF":
-        if len(sys.argv) < 4:
-            print("Error: BF requires cutoff_seconds.")
-            sys.exit(1)
-        cutoff = float(sys.argv[3])
-        best_cost, best_tour = brute_force_tsp(dist, cutoff)
-        write_solution_file(
-            instance_name,
-            method,
-            cutoff=cutoff,
-            seed=None,
-            best_cost=best_cost,
-            best_tour_indices=best_tour,
-            node_ids=node_ids,
-        )
-
-    elif method == "Approx":
-        best_cost, best_tour = mst_approx_tsp(dist)
-        write_solution_file(
-            instance_name,
-            method,
-            cutoff=None,
-            seed=None,
-            best_cost=best_cost,
-            best_tour_indices=best_tour,
-            node_ids=node_ids,
-        )
-
-    elif method == "LS":
-        if len(sys.argv) < 5:
-            print("Error: LS requires cutoff_seconds and seed.")
-            sys.exit(1)
-        cutoff = float(sys.argv[3])
-        seed = int(sys.argv[4])
-        best_cost, best_tour = two_opt_local_search(dist, cutoff, seed)
-        write_solution_file(
-            instance_name,
-            method,
-            cutoff=cutoff,
-            seed=seed,
-            best_cost=best_cost,
-            best_tour_indices=best_tour,
-            node_ids=node_ids,
-        )
-
-    else:
-        print(f"Unknown method '{method}'. Use BF, Approx, or LS.")
-        sys.exit(1)
+    print(f"Best tour length: {best_len}")
+    print(f"Solution written to: {sol_path}")
 
 
 if __name__ == "__main__":
